@@ -1,18 +1,19 @@
 import React, { useState } from 'react';
-import { Check, Copy, RefreshCw } from 'lucide-react';
+import { Check, Clock, Copy } from 'lucide-react';
 import { MarketAnalysis } from '../types/lottery';
 import { CATEGORY_LABELS } from '../data/markets';
+import { MarketRoundStatus } from '../utils/schedule';
 
 interface CuratedPicksHeroProps {
   analysis: MarketAnalysis;
-  onSimulateLiveUpdate: () => void;
+  roundStatus: MarketRoundStatus;
   onOpenRecordModal: () => void;
   lastUpdatedText: string;
 }
 
 export const CuratedPicksHero: React.FC<CuratedPicksHeroProps> = ({
   analysis,
-  onSimulateLiveUpdate,
+  roundStatus,
   onOpenRecordModal,
   lastUpdatedText,
 }) => {
@@ -200,8 +201,15 @@ export const CuratedPicksHero: React.FC<CuratedPicksHeroProps> = ({
 
       {/* Action Footer */}
       <div className="border-t border-slate-200 bg-slate-50/70 px-5 py-3 sm:px-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="text-xs text-slate-500 font-mono tabular-nums">
-          คำนวณล่าสุด: {lastUpdatedText} · สถิติต่อเนื่อง {bestFormula.currentStreak} งวดติด
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600 font-mono tabular-nums">
+          <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+            <Clock className="h-3.5 w-3.5 text-blue-600 shrink-0" aria-hidden="true" />
+            <span>{roundStatus.label}</span>
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>
+            สถิติต่อเนื่อง {bestFormula.currentStreak} งวดติด (เวลาไทย {lastUpdatedText})
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -220,15 +228,6 @@ export const CuratedPicksHero: React.FC<CuratedPicksHeroProps> = ({
                 <span>คัดลอกชุดตัวเลข</span>
               </>
             )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onSimulateLiveUpdate}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-blue-600"
-          >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>อัปเดตผลเรียลไทม์</span>
           </button>
 
           <button

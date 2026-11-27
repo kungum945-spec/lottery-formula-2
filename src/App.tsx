@@ -12,6 +12,13 @@ import {
   generateAccuracyAlerts,
   generateRealisticNextDraw,
 } from './utils/formulas';
+import {
+  findMarketsDueAtExactTransition,
+  formatDurationThai,
+  getBangkokTimeParts,
+  getMarketRoundStatus,
+  getNextUpcomingMarket,
+} from './utils/schedule';
 import { ActiveTab, Header } from './components/Header';
 import { CategoryFilter, MarketSidebar } from './components/MarketSidebar';
 import { CuratedPicksHero } from './components/CuratedPicksHero';
@@ -21,7 +28,7 @@ import { TopMarketsView } from './components/TopMarketsView';
 import { AlertCenterDrawer } from './components/AlertCenterDrawer';
 import { RecordDrawModal } from './components/RecordDrawModal';
 
-const STORAGE_MARKETS_KEY = 'thai_stock_lotto_markets_v1';
+const STORAGE_MARKETS_KEY = 'thai_stock_lotto_markets_v2';
 const STORAGE_THRESHOLD_KEY = 'thai_stock_lotto_threshold_v1';
 
 function loadSavedMarkets(): MarketDefinition[] {
@@ -99,6 +106,7 @@ export default function App() {
   const [nowTime, setNowTime] = useState<Date>(() => new Date());
 
   const prevHighMarketsRef = useRef<Set<string>>(new Set());
+  const prevTickRef = useRef<Date>(new Date());
 
   // Persist markets & threshold
   useEffect(() => {
@@ -117,13 +125,57 @@ export default function App() {
     }
   }, [accuracyThreshold]);
 
-  // Real-time 1-second clock
+  // Real-time 1-second Bangkok clock & per-round draw-time transition watcher
   useEffect(() => {
     const timer = setInterval(() => {
-      setNowTime(new Date());
+      const currentNow = new Date();
+      const prevTick = prevTickRef.current;
+      prevTickRef.current = currentNow;
+      setNowTime(currentNow);
+
+      if (!realtimeEnabled) return;
+
+      setMarkets((prev) => {
+        const dueMarkets = findMarketsDueAtExactTransition(
+          prev,
+          prevTick,
+          currentNow
+        );
+        if (dueMarkets.length === 0) return prev;
+
+        const dueIds = new Set(dueMarkets.map((m) => m.id));
+        const updated = prev.map((m) => {
+          if (!dueIds.has(m.id)) return m;
+          const nextDraw = generateRealisticNextDraw(m, true, currentNow);
+          return { ...m, draws: [...m.draws, nextDraw].slice(-25) };
+        });
+
+        for (const dueMarket of dueMarkets) {
+          const updatedMarket = updated.find((m) => m.id === dueMarket.id);
+          if (!updatedMarket) continue;
+          const updatedAnalysis = analyzeMarket(
+            updatedMarket,
+            accuracyThreshold
+          );
+          const alertObj = generateAccuracyAlerts(
+            [updatedAnalysis],
+            accuracyThreshold
+          )[0];
+          if (alertObj) {
+            prevHighMarketsRef.current.add(alertObj.id);
+            setLiveToast(alertObj);
+            if (soundEnabled) {
+              playNotificationChime();
+            }
+          }
+        }
+
+        return updated;
+      });
     }, 1000);
+
     return () => clearInterval(timer);
-  }, []);
+  }, [realtimeEnabled, accuracyThreshold, soundEnabled]);
 
   const analyses = useMemo(
     () => markets.map((m) => analyzeMarket(m, accuracyThreshold)),
@@ -193,39 +245,6 @@ export default function App() {
     [accuracyThreshold, soundEnabled]
   );
 
-  // Automatic real-time stream tick (every 18 seconds when enabled)
-  useEffect(() => {
-    if (!realtimeEnabled) return;
-    const interval = setInterval(() => {
-      setMarkets((prev) => {
-        const idx = Math.floor(Date.now() / 18000) % prev.length;
-        const target = prev[idx];
-        const nextDraw = generateRealisticNextDraw(target, true);
-        const updated = prev.map((m, i) =>
-          i === idx ? { ...m, draws: [...m.draws, nextDraw].slice(-25) } : m
-        );
-
-        const updatedAnalysis = analyzeMarket(updated[idx], accuracyThreshold);
-        if (updatedAnalysis.bestFormula.accuracyPercent >= accuracyThreshold) {
-          const alertObj = generateAccuracyAlerts(
-            [updatedAnalysis],
-            accuracyThreshold
-          )[0];
-          if (alertObj && !prevHighMarketsRef.current.has(alertObj.id)) {
-            prevHighMarketsRef.current.add(alertObj.id);
-            setLiveToast(alertObj);
-            if (soundEnabled) {
-              playNotificationChime();
-            }
-          }
-        }
-        return updated;
-      });
-    }, 18000);
-
-    return () => clearInterval(interval);
-  }, [realtimeEnabled, accuracyThreshold, soundEnabled]);
-
   const handleSelectMarket = (marketId: string) => {
     setSelectedMarketId(marketId);
     setInspectedFormulaId(null);
@@ -235,11 +254,6 @@ export default function App() {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  };
-
-  const handleSimulateSelectedMarket = () => {
-    const nextDraw = generateRealisticNextDraw(selectedAnalysis.market, true);
-    appendDrawToMarket(selectedAnalysis.market.id, nextDraw);
   };
 
   const handleManualSubmitDraw = ({
@@ -277,11 +291,16 @@ export default function App() {
       (f) => f.formulaId === inspectedFormulaId
     ) ?? selectedAnalysis.bestFormula;
 
-  const lastUpdatedText = nowTime.toLocaleTimeString('th-TH', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  const bangkokNow = getBangkokTimeParts(nowTime);
+  const lastUpdatedText = `${bangkokNow.timeLabel} น.`;
+  const selectedRoundStatus = getMarketRoundStatus(
+    selectedAnalysis.market,
+    nowTime
+  );
+  const nextUpcoming = useMemo(
+    () => getNextUpcomingMarket(markets, nowTime),
+    [markets, nowTime]
+  );
 
   const hasCustomDraws = markets.some(
     (m, i) => m.draws.length !== INITIAL_MARKETS[i].draws.length
@@ -300,11 +319,19 @@ export default function App() {
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3 px-4 py-2.5 sm:px-6">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
             <span className="font-mono font-semibold tabular-nums text-slate-800">
-              เวลาเรียลไทม์ {lastUpdatedText} น.
+              เวลาไทย {lastUpdatedText}
             </span>
             <span aria-hidden="true">·</span>
-            <span>ครอบคลุม {markets.length} ตลาด</span>
-            <span aria-hidden="true">·</span>
+            {nextUpcoming && (
+              <>
+                <span className="font-mono tabular-nums text-slate-700">
+                  รอบถัดไป: {nextUpcoming.market.shortName} (
+                  {nextUpcoming.market.drawTime} · อีก{' '}
+                  {formatDurationThai(nextUpcoming.countdownSeconds)})
+                </span>
+                <span aria-hidden="true">·</span>
+              </>
+            )}
             <span className="text-emerald-700 font-semibold">
               แม่นยำสูง (&ge;{accuracyThreshold}%): {alerts.length} ตลาด
             </span>
@@ -323,7 +350,9 @@ export default function App() {
             >
               <Radio className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span>
-                {realtimeEnabled ? 'เรียลไทม์: เปิดอยู่' : 'เรียลไทม์: ปิด'}
+                {realtimeEnabled
+                  ? 'แจ้งผลตามรอบเวลา: เปิดอยู่'
+                  : 'แจ้งผลตามรอบเวลา: ปิด'}
               </span>
             </button>
 
@@ -486,7 +515,7 @@ export default function App() {
               {(activeTab === 'overview' || activeTab === 'formulas') && (
                 <CuratedPicksHero
                   analysis={selectedAnalysis}
-                  onSimulateLiveUpdate={handleSimulateSelectedMarket}
+                  roundStatus={selectedRoundStatus}
                   onOpenRecordModal={() => setIsRecordModalOpen(true)}
                   lastUpdatedText={lastUpdatedText}
                 />

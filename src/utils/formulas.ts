@@ -9,6 +9,7 @@ import {
   MarketAnalysis,
   MarketDefinition,
 } from '../types/lottery';
+import { getBangkokTimeParts } from './schedule';
 
 export const FORMULA_META: Record<
   FormulaId,
@@ -565,16 +566,18 @@ export function generateAccuracyAlerts(
 
 export function generateRealisticNextDraw(
   market: MarketDefinition,
-  biasAccuracy = true
+  biasAccuracy = true,
+  now: Date = new Date()
 ): DrawRecord {
   const analysis = analyzeMarket(market);
   const topPred = analysis.bestFormula.nextPrediction;
+  const bkk = getBangkokTimeParts(now);
   const seed =
     market.draws.length * 37 +
+    bkk.day * 13 +
     market.name.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
 
-  // Use deterministic pseudo-random seeded by draw length + current seconds
-  const tick = Math.floor(Date.now() / 1000);
+  const tick = Math.floor(now.getTime() / 1000);
   const n1 = (seed + tick) % 10;
   const n2 = (seed * 3 + tick * 7) % 10;
   const n3 = (seed * 5 + tick * 11) % 10;
@@ -583,7 +586,6 @@ export function generateRealisticNextDraw(
   let bottom2: string;
 
   if (biasAccuracy && (tick + seed) % 10 < 8) {
-    // Realistic market movement picking one of the hot digits/pairs
     const pickPair = topPred.sixPairs[(tick + seed) % topPred.sixPairs.length];
     top3 = `${n1}${pickPair}`;
     bottom2 = `${topPred.runningTwo[(tick + 1) % 2]}${n3}`;
@@ -592,16 +594,9 @@ export function generateRealisticNextDraw(
     bottom2 = `${(n2 + 3) % 10}${(n3 + 7) % 10}`;
   }
 
-  const nextNum = market.draws.length + 1;
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString('th-TH', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
   return {
-    id: `${market.id}-live-${Date.now()}`,
-    roundLabel: `รอบสด ${timeStr} (#${nextNum})`,
+    id: `${market.id}-round-${bkk.dateKey}`,
+    roundLabel: `${bkk.thaiShortDate} (${market.drawTime})`,
     dateISO: now.toISOString(),
     top3,
     bottom2,
